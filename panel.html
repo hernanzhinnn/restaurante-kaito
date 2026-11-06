@@ -1,0 +1,43 @@
+<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Kaito · Panel del restaurante</title><link rel="stylesheet" href="style.css"></head><body>
+<nav><b>KAITO · PANEL</b></nav>
+<section id="login"><h2>Acceso del personal</h2><form class="box s" id="li"><label>Email</label><input id="em" type="email" required><label>Contraseña</label><input id="pw" type="password" required><button style="margin-top:12px">Ingresar</button><div class="msg bad hide" id="lm"></div></form></section>
+<div id="app" class="hide" style="max-width:1100px;margin:auto;padding:20px 14px">
+<div class="st" id="st"></div><h2 style="text-align:left">Mesas ocupadas ahora</h2><p class="sub" style="text-align:left">Las alertas a los clientes salen solas. Dejá esta pantalla abierta.</p><div class="g3" id="now" style="margin-bottom:28px"></div>
+<h2 style="text-align:left">Base de datos de reservas</h2><div class="box" style="margin-top:12px"><table class="tb"><thead><tr><th>Fecha</th><th>Hora</th><th>Mesa</th><th>Cliente</th><th>Email</th><th>Pers.</th><th>Seña</th><th>Pago</th><th>Código</th><th>Consumo</th><th>A cobrar</th></tr></thead><tbody id="tb"></tbody></table></div>
+<h2 style="text-align:left;margin-top:28px">Avisos enviados</h2><div class="box" id="av"></div></div>
+<div id="toast"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script><script src="app.js"></script>
+<script>
+let RES=[],PED=[],AV=[],lastCli=0;const SIG={recibido:'preparando',preparando:'listo',listo:'entregado'},EST={recibido:'Recibido',preparando:'En preparación',listo:'Listo',entregado:'Entregado'};
+const ini=r=>new Date(r.fecha+'T'+r.hora).getTime(),fin=r=>ini(r)+9000000,vivo=r=>r.pago_estado==='aprobado'&&Date.now()>=ini(r)-9e5&&Date.now()<=fin(r);
+sb.auth.getSession().then(({data})=>{if(data.session)start()});
+$('li').onsubmit=async e=>{e.preventDefault();const {error}=await sb.auth.signInWithPassword({email:$('em').value,password:$('pw').value});if(error){$('lm').classList.remove('hide');$('lm').textContent='Email o contraseña incorrectos'}else start()};
+function start(){$('login').classList.add('hide');$('app').classList.remove('hide');cargar();setInterval(cargar,10000)}
+async function cargar(){const hoy=new Date().toLocaleDateString('sv-SE');
+ const [a,b,c]=await Promise.all([sb.from('reservas').select('*').gte('fecha',hoy).order('fecha').order('hora'),sb.from('pedidos').select('*').order('creado'),sb.from('avisos').select('*').order('creado',{ascending:false}).limit(80)]);
+ RES=a.data||[];PED=b.data||[];AV=c.data||[];await reglas();pintar()}
+// ===== ALERTAS AUTOMÁTICAS A LOS CLIENTES =====
+async function reglas(){const out=[],now=Date.now(),has=(r,k)=>AV.some(x=>x.reserva_id===r.id&&x.regla===k);
+ for(const r of RES.filter(vivo)){const add=(k,m)=>{if(!has(r,k)&&!out.some(o=>o.reserva_id===r.id&&o.regla===k))out.push({reserva_id:r.id,mesa:r.mesa,regla:k,mensaje:m})};
+  for(const p of PED.filter(p=>p.reserva_id===r.id)){const t0=new Date(p.creado).getTime();
+   add('rec:'+p.id,`Recibimos tu pedido. Tiempo estimado: ${p.minutos} min.`);
+   if(p.estado==='preparando')add('prep:'+p.id,'Tu pedido ya está en preparación.');
+   if(p.estado==='listo')add('listo:'+p.id,'¡Tu pedido está listo y va camino a tu mesa!');
+   if(!['listo','entregado'].includes(p.estado)&&now>t0+p.minutos*60000)add('dem:'+p.id,'Estamos demorando un poco más de lo previsto. Disculpá, faltan unos minutos.');
+   if(p.estado==='entregado'&&now>new Date(p.actualizado).getTime()+9e5)add('algo:'+p.id,'¿Necesitás algo más? Podés pedir desde la carta o tocar «Llamar al mozo».')}
+  if(fin(r)-now<9e5&&fin(r)>now)add('fin:'+r.id,'Tu mesa se libera en 15 minutos. ¿Querés pedir la cuenta o un último postre?')}
+ if(out.length){await sb.from('avisos').upsert(out,{onConflict:'reserva_id,regla',ignoreDuplicates:true});const {data}=await sb.from('avisos').select('*').order('creado',{ascending:false}).limit(80);AV=data||AV}}
+async function estado(id,e){await sb.from('pedidos').update({estado:e,actualizado:new Date().toISOString()}).eq('id',id);cargar()}
+async function avisar(rid,mesa){const m=prompt('Mensaje para la mesa '+mesa+':');if(m){await sb.from('avisos').insert({reserva_id:rid,mesa,mensaje:m});cargar()}}
+const consumo=r=>PED.filter(p=>p.reserva_id===r.id).reduce((s,p)=>s+Number(p.total),0);
+function pintar(){const hoy=new Date().toLocaleDateString('sv-SE'),ap=RES.filter(r=>r.pago_estado==='aprobado'),vv=RES.filter(vivo);
+ const efe=PED.filter(p=>p.metodo==='Efectivo'&&vv.some(r=>r.id===p.reserva_id)).reduce((s,p)=>s+Number(p.total),0);
+ $('st').innerHTML=[[ap.filter(r=>r.fecha===hoy).length,'reservas de hoy'],[vv.length,'mesas ocupadas'],[PED.filter(p=>!['entregado'].includes(p.estado)&&vv.some(r=>r.id===p.reserva_id)).length,'pedidos activos'],[money(ap.reduce((s,r)=>s+Number(r.sena),0)),'señas cobradas'],[money(efe),'a cobrar en efectivo']].map(x=>`<div><b>${x[0]}</b>${x[1]}</div>`).join('');
+ $('now').innerHTML=vv.length?vv.map(r=>{const ps=PED.filter(p=>p.reserva_id===r.id),cons=consumo(r),pet=AV.filter(a=>a.reserva_id===r.id&&a.de==='cliente').slice(0,2);
+  return `<div class="mesa ${pet.length?'al':''}"><b>Mesa ${r.mesa}</b> · ${esc(r.nombre)} · ${r.personas} pers.<br><small style="color:var(--mut)">Queda ${mmss(fin(r)-Date.now())} · Consumo ${money(cons)} · Seña −${money(r.sena)} · <b style="color:var(--fg)">A cobrar ${money(Math.max(0,cons-r.sena))}</b></small>
+  ${ps.map(p=>`<div style="margin-top:8px;font-size:14px">${p.items.map(i=>i.qty+'× '+esc(i.nombre)).join(', ')}<br>${p.metodo==='Efectivo'?'<b class="bad">💵 EFECTIVO '+money(p.total)+'</b> · ':esc(p.metodo)+' · '}<b>${EST[p.estado]}</b> ${SIG[p.estado]?`<button class="g" style="padding:3px 10px" onclick="estado('${p.id}','${SIG[p.estado]}')">→ ${EST[SIG[p.estado]]}</button>`:''}</div>`).join('')}
+  ${pet.map(a=>`<div class="aviso cliente">🔔 ${esc(a.mensaje)}</div>`).join('')}<button class="g" style="margin-top:8px;padding:4px 12px" onclick="avisar('${r.id}',${r.mesa})">Enviar aviso</button></div>`}).join(''):'<p class="sub">No hay mesas ocupadas en este momento.</p>';
+ $('tb').innerHTML=RES.map(r=>`<tr><td>${r.fecha}</td><td>${r.hora.slice(0,5)}</td><td>${r.mesa}</td><td>${esc(r.nombre)}<br><small>${esc(r.telefono||'')}</small></td><td>${esc(r.email)}</td><td>${r.personas}</td><td>${money(r.sena)}</td><td>${r.pago_estado}</td><td>${r.codigo_enviado?'enviado':'—'}</td><td>${money(consumo(r))}</td><td>${money(Math.max(0,consumo(r)-r.sena))}</td></tr>`).join('');
+ $('av').innerHTML=AV.map(a=>`<div class="aviso ${a.de}">${hhmm(a.creado)} · Mesa ${a.mesa} · ${a.de==='cliente'?'CLIENTE: ':''}${esc(a.mensaje)}</div>`).join('')||'<p class="sub">Sin avisos.</p>';
+ const nv=AV.filter(a=>a.de==='cliente'&&a.id>lastCli);if(lastCli&&nv.length)toast('🔔 Mesa '+nv[0].mesa+': '+esc(nv[0].mensaje));lastCli=Math.max(lastCli,0,...AV.map(a=>a.id))}
+</script></body></html>

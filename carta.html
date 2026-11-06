@@ -1,0 +1,35 @@
+<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Kaito Sushi · Mi carta</title><link rel="stylesheet" href="style.css"></head><body>
+<nav><b>KAITO</b><a href="index.html">Inicio</a><a href="carta.html">Mi carta</a></nav>
+<section id="login"><h2>Mi carta</h2><p class="sub">Ingresá el código que te enviamos por correo</p><div class="box s"><label>Código de tu mesa</label><input id="code" placeholder="KTA-233" autocomplete="off"><button id="go" style="margin-top:12px">Entrar</button><div class="msg bad hide" id="lm"></div></div></section>
+<div id="app" class="hide"><section style="padding-bottom:0"><div class="box"><div class="row" style="align-items:center"><div id="info"></div><div style="text-align:right">Tiempo de estadía: <b id="resta"></b></div></div><div id="cuenta" style="margin-top:8px;color:var(--mut)"></div></div></section>
+<section style="padding-bottom:0"><h2>Mi pedido</h2><div class="box"><div id="ped"></div><div id="avs" style="margin-top:12px"></div>
+<div class="row" style="margin-top:12px"><button class="g" data-a="Necesito al mozo en la mesa">Llamar al mozo</button><button class="g" data-a="Quiero pedir la cuenta">Pedir la cuenta</button><button class="g" data-a="Necesito algo más">Necesito algo más</button></div></div></section>
+<section><h2>Carta</h2><div class="box" id="menu"></div><div class="box" style="margin-top:14px"><div class="total" style="font-size:20px;display:flex;justify-content:space-between"><span>Este pedido</span><b id="tt">$0</b></div><label>Forma de pago</label>
+<div class="pay"><label><input type="radio" name="pm" value="Efectivo" checked>Efectivo</label><label><input type="radio" name="pm" value="Tarjeta">Tarjeta (posnet)</label><label><input type="radio" name="pm" value="Mercado Pago / QR">Mercado Pago / QR</label><label><input type="radio" name="pm" value="Transferencia">Transferencia</label></div>
+<button id="send" style="width:100%;margin-top:14px">Enviar pedido</button></div></section></div>
+<div id="toast"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script><script src="app.js"></script>
+<script>
+let code=sessionStorage.getItem('code')||'',cart={},MENU=[],lastAv=0,R=null;
+const EST={recibido:'Recibido',preparando:'En preparación',listo:'Listo, va a tu mesa',entregado:'Entregado'};
+const total=()=>MENU.reduce((s,m)=>s+(cart[m.id]||0)*m.precio,0);
+function renderMenu(){let c='';$('menu').innerHTML=MENU.map(m=>{const h=m.categoria!==c?`<h3 style="font-weight:400;margin:14px 0 0">${c=m.categoria}</h3>`:'';return h+`<div class="item"><img src="${esc(m.imagen)}" alt=""><div><b>${esc(m.nombre)}</b><br><small style="color:var(--mut)">${esc(m.descripcion)}</small><br><span class="price">${money(m.precio)}</span></div><div class="q"><button class="g" data-i="${m.id}" data-d="-1">−</button><span>${cart[m.id]||0}</span><button class="g" data-i="${m.id}" data-d="1">+</button></div></div>`}).join('');$('tt').textContent=money(total());
+ $('menu').querySelectorAll('[data-i]').forEach(b=>b.onclick=()=>{const i=b.dataset.i;cart[i]=Math.max(0,(cart[i]||0)+ +b.dataset.d);renderMenu()})}
+async function entrar(c,silent){const {data}=await sb.rpc('mis_datos',{p_codigo:c});
+ if(!data){if(silent){code='';sessionStorage.removeItem('code')}else{$('lm').classList.remove('hide');$('lm').textContent='Código inválido o fuera del horario de tu reserva (desde 15 min antes hasta 2 h 30 min después).'}return}
+ code=c;sessionStorage.setItem('code',c);$('login').classList.add('hide');$('app').classList.remove('hide');paint(data)}
+async function refresh(){const {data}=await sb.rpc('mis_datos',{p_codigo:code});
+ if(!data){code='';sessionStorage.removeItem('code');$('app').classList.add('hide');$('login').classList.remove('hide');$('lm').classList.remove('hide');$('lm').textContent='Tu estadía terminó. ¡Gracias por visitarnos!';return}paint(data)}
+function paint(d){R=d.reserva;$('info').innerHTML=`Mesa <b>${R.mesa}</b> · ${esc(R.nombre)}`;
+ const cons=d.pedidos.reduce((s,p)=>s+Number(p.total),0);$('cuenta').innerHTML=`Consumo ${money(cons)} · Seña pagada −${money(R.sena)} · <b style="color:var(--fg)">A pagar ${money(Math.max(0,cons-R.sena))}</b>`;
+ $('ped').innerHTML=d.pedidos.length?d.pedidos.map(p=>`<div class="item"><div><b>Pedido de las ${hhmm(p.creado)}</b> · ${EST[p.estado]||p.estado}<br><small style="color:var(--mut)">${p.items.map(i=>i.qty+'× '+esc(i.nombre)).join(', ')} · ${esc(p.metodo)}</small>${['listo','entregado'].includes(p.estado)?'':`<br><small class="eta" data-t="${new Date(p.creado).getTime()+p.minutos*60000}"></small>`}</div><b>${money(p.total)}</b></div>`).join(''):'<p class="sub">Todavía no pediste nada.</p>';
+ $('avs').innerHTML=d.avisos.map(a=>`<div class="aviso ${a.de}">${hhmm(a.creado)} · ${a.de=='cliente'?'Vos: ':''}${esc(a.mensaje)}</div>`).join('');
+ const nv=d.avisos.filter(a=>a.de==='restaurante'&&a.id>lastAv);if(lastAv&&nv.length)toast('🔔 '+esc(nv[0].mensaje));lastAv=Math.max(lastAv,0,...d.avisos.map(a=>a.id))}
+function tick(){if(!R)return;$('resta').textContent=mmss(new Date(R.fin)-Date.now());document.querySelectorAll('.eta').forEach(e=>{const ms=+e.dataset.t-Date.now();e.textContent=ms>0?`Llega en aprox. ${Math.ceil(ms/60000)} min`:'Estamos terminando tu pedido, unos minutos más…'})}
+$('go').onclick=()=>entrar($('code').value.trim().toUpperCase());
+$('send').onclick=async()=>{const items=Object.entries(cart).filter(x=>x[1]>0).map(([id,qty])=>({id:+id,qty}));if(!items.length)return toast('Elegí al menos un plato.');
+ const pm=document.querySelector('[name=pm]:checked').value,{error}=await sb.rpc('crear_pedido',{p_codigo:code,p_items:items,p_metodo:pm});if(error)return toast(esc(error.message));
+ const t=total();cart={};renderMenu();toast(pm==='Efectivo'?`Pedido enviado. El restaurante ya sabe que pagarás ${money(t)} en efectivo.`:'Pedido enviado. ¡Gracias!');refresh()};
+document.querySelectorAll('[data-a]').forEach(b=>b.onclick=async()=>{const {error}=await sb.rpc('pedir_ayuda',{p_codigo:code,p_texto:b.dataset.a});toast(error?esc(error.message):'Aviso enviado al personal.');refresh()});
+(async()=>{const {data}=await sb.from('menu').select('*').order('id');MENU=data||[];renderMenu();if(code)await entrar(code,true);setInterval(()=>code&&refresh(),10000);setInterval(tick,1000)})();
+</script></body></html>
